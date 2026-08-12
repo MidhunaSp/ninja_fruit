@@ -43,8 +43,6 @@ cd ninja_fruitblade
 python3 -m http.server 8000
 ```
 
-Then open **http://localhost:8000/blade-dojo.html** and allow camera access when prompted.
-
 ### Option 2 — Node
 
 ```bash
