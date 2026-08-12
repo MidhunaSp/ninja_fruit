@@ -1,0 +1,1093 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Blade Dojo — Hand-Tracking Fruit Slicer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rubik:wght@400;500;700;900&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --bg: #060911;
+    --bg-2: #0a0f1c;
+    --panel: rgba(13,20,32,0.86);
+    --panel-border: rgba(77,255,240,0.18);
+    --blade: #4dfff0;
+    --blade-soft: rgba(77,255,240,0.45);
+    --danger: #ff3b3b;
+    --gold: #ffcf4d;
+    --text: #eaf6ff;
+    --text-dim: #7c8aa0;
+    --font-display: 'Bebas Neue', sans-serif;
+    --font-body: 'Rubik', sans-serif;
+  }
+  *{ box-sizing: border-box; }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background: var(--bg);
+    font-family: var(--font-body);
+    color: var(--text);
+    overflow:hidden;
+    -webkit-user-select:none; user-select:none;
+    touch-action:none;
+  }
+  #game-container{
+    position:relative; width:100vw; height:100vh; overflow:hidden;
+    background:
+      radial-gradient(ellipse at 50% -10%, rgba(77,255,240,0.10), transparent 60%),
+      radial-gradient(ellipse at 50% 110%, rgba(255,63,63,0.06), transparent 55%),
+      var(--bg);
+  }
+  #game-canvas{ position:absolute; top:0; left:0; display:block; cursor:none; }
+
+  /* ---- Hand preview ---- */
+  #hand-preview-wrap{
+    position:absolute; top:16px; left:16px; width:160px; height:120px;
+    border-radius:12px; overflow:hidden; z-index:20;
+    border:1px solid var(--panel-border);
+    box-shadow: 0 0 24px rgba(0,0,0,0.5);
+    background:#000;
+    opacity:0.9;
+    transition: opacity .3s;
+  }
+  #hand-preview-wrap.hidden{ display:none; }
+  #preview-video{
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    object-fit:cover; transform:scaleX(-1);
+  }
+  #preview-overlay{ position:absolute; top:0; left:0; width:100%; height:100%; }
+  #tracking-status{
+    position:absolute; bottom:2px; left:6px; font-size:10px; letter-spacing:.05em;
+    font-family: var(--font-body); font-weight:600; text-transform:uppercase;
+    color: var(--text-dim); background:rgba(0,0,0,0.5); padding:2px 6px; border-radius:6px;
+  }
+  #tracking-status.live{ color: var(--blade); }
+
+  /* ---- HUD ---- */
+  #hud{
+    position:absolute; top:0; left:0; width:100%; z-index:15;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    padding:18px 24px; pointer-events:none;
+  }
+  #hud.hidden{ display:none; }
+  .hud-block{ display:flex; flex-direction:column; align-items:flex-end; gap:2px; }
+  .hud-block.left{ align-items:flex-start; margin-left:180px; }
+  .hud-label{ font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--text-dim); font-weight:600; }
+  .hud-value{ font-family:var(--font-display); font-size:40px; line-height:1; letter-spacing:.02em; color:var(--text);
+    text-shadow: 0 0 18px rgba(77,255,240,0.35); }
+  #combo-display{ font-family:var(--font-display); font-size:26px; color:var(--gold); text-shadow:0 0 14px rgba(255,207,77,.5);
+    opacity:0; transition:opacity .15s; }
+  #combo-display.show{ opacity:1; }
+  #lives-row{ display:flex; gap:6px; }
+  .life-dot{ width:16px; height:16px; border-radius:50%; background:var(--danger); box-shadow:0 0 8px var(--danger); }
+  .life-dot.lost{ background:rgba(255,255,255,0.08); box-shadow:none; }
+  #mode-pill{ font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--blade); font-weight:700;
+    border:1px solid var(--panel-border); padding:4px 10px; border-radius:20px; background:rgba(77,255,240,0.06); }
+
+  /* ---- Screens ---- */
+  .screen{
+    position:absolute; inset:0; z-index:30; display:flex; align-items:center; justify-content:center;
+    background: radial-gradient(ellipse at 50% 40%, rgba(20,28,44,0.9), rgba(3,5,9,0.96));
+    backdrop-filter: blur(6px);
+  }
+  .screen.hidden{ display:none; }
+  .panel{
+    background: var(--panel); border:1px solid var(--panel-border); border-radius:20px;
+    padding:36px 40px; max-width:640px; width:92%; text-align:center;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.03);
+  }
+  h1.title{
+    font-family:var(--font-display); font-size:64px; letter-spacing:.03em; margin:0 0 4px;
+    background:linear-gradient(180deg,#fff, var(--blade) 130%);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    text-shadow: 0 0 40px rgba(77,255,240,0.25);
+  }
+  .subtitle{ color:var(--text-dim); font-size:14px; letter-spacing:.08em; text-transform:uppercase; margin-bottom:28px; }
+
+  .mode-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:22px; }
+  .mode-card{
+    background:rgba(255,255,255,0.03); border:1px solid var(--panel-border); border-radius:14px;
+    padding:16px 12px; cursor:pointer; transition: all .15s ease; text-align:left;
+  }
+  .mode-card:hover, .mode-card.selected{ border-color:var(--blade); background:rgba(77,255,240,0.08); transform:translateY(-2px); }
+  .mode-card h3{ font-family:var(--font-display); font-size:22px; margin:0 0 6px; letter-spacing:.02em; color:var(--text); }
+  .mode-card p{ font-size:12px; color:var(--text-dim); margin:0 0 10px; line-height:1.4; min-height:48px; }
+  .mode-card .hs{ font-size:11px; color:var(--gold); font-weight:700; letter-spacing:.05em; }
+
+  .input-row{ display:flex; gap:10px; justify-content:center; margin-bottom:22px; }
+  .input-opt{
+    flex:1; max-width:220px; padding:10px 14px; border-radius:12px; border:1px solid var(--panel-border);
+    background:rgba(255,255,255,0.03); cursor:pointer; font-size:13px; font-weight:600; color:var(--text-dim);
+    transition:all .15s;
+  }
+  .input-opt.selected{ border-color:var(--gold); color:var(--gold); background:rgba(255,207,77,0.08); }
+
+  .btn{
+    font-family:var(--font-display); font-size:22px; letter-spacing:.05em; padding:14px 40px; border-radius:14px;
+    border:none; cursor:pointer; background:linear-gradient(180deg, var(--blade), #1fb8a8); color:#031014;
+    box-shadow:0 8px 24px rgba(77,255,240,0.28); transition:transform .12s ease;
+  }
+  .btn:hover{ transform:translateY(-2px); }
+  .btn:active{ transform:translateY(0); }
+  .btn.secondary{ background:transparent; border:1px solid var(--panel-border); color:var(--text); box-shadow:none; }
+  #status-line{ font-size:12px; color:var(--text-dim); margin-top:16px; min-height:16px; }
+
+  .spinner{ width:36px; height:36px; border-radius:50%; border:3px solid rgba(77,255,240,0.2); border-top-color:var(--blade);
+    animation:spin 0.9s linear infinite; margin:0 auto 18px; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  #final-score{ font-family:var(--font-display); font-size:80px; margin:6px 0; color:var(--text);
+    text-shadow:0 0 30px rgba(77,255,240,0.35); }
+  #new-record{ color:var(--gold); font-weight:700; letter-spacing:.08em; text-transform:uppercase; font-size:13px; margin-bottom:10px; height:16px; }
+
+  #pause-hint{ position:absolute; top:18px; right:24px; z-index:16; font-size:11px; color:var(--text-dim); letter-spacing:.06em; }
+  #pause-hint kbd{ background:rgba(255,255,255,0.08); border-radius:4px; padding:1px 5px; border:1px solid rgba(255,255,255,0.12); }
+
+  footer.credits{ position:fixed; bottom:6px; right:10px; font-size:10px; color:rgba(255,255,255,0.15); z-index:5; }
+</style>
+</head>
+<body>
+
+<div id="game-container">
+  <canvas id="game-canvas"></canvas>
+
+  <!-- Hand tracking preview -->
+  <div id="hand-preview-wrap" class="hidden">
+    <video id="preview-video" autoplay playsinline muted></video>
+    <canvas id="preview-overlay"></canvas>
+    <div id="tracking-status">Searching…</div>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div class="hud-block left">
+      <div id="mode-pill">Classic</div>
+      <div class="hud-label" style="margin-top:10px;">Score</div>
+      <div class="hud-value" id="score-value">0</div>
+      <div id="combo-display">COMBO x1</div>
+    </div>
+    <div class="hud-block">
+      <div class="hud-label">High Score</div>
+      <div class="hud-value" id="hs-value" style="font-size:24px; color:var(--text-dim);">0</div>
+      <div id="lives-row" style="margin-top:12px;"></div>
+      <div class="hud-label" id="timer-label" style="margin-top:12px; display:none;">Time</div>
+      <div class="hud-value" id="timer-value" style="font-size:30px; display:none;">60</div>
+    </div>
+  </div>
+  <div id="pause-hint" class="hidden">Press <kbd>P</kbd> to pause · <kbd>Esc</kbd> for menu · <kbd>M</kbd> mute</div>
+
+  <!-- Start Screen -->
+  <div id="screen-start" class="screen">
+    <div class="panel">
+      <h1 class="title">BLADE DOJO</h1>
+      <div class="subtitle">slice with your finger · powered by webcam hand tracking</div>
+
+      <div class="mode-grid">
+        <div class="mode-card selected" data-mode="classic">
+          <h3>Classic</h3>
+          <p>3 lives. Bombs end the run instantly. Survive as long as you can.</p>
+          <div class="hs">Best: <span data-hs="classic">0</span></div>
+        </div>
+        <div class="mode-card" data-mode="zen">
+          <h3>Zen</h3>
+          <p>90 seconds, no bombs, no lives. Just you, the fruit, and the blade.</p>
+          <div class="hs">Best: <span data-hs="zen">0</span></div>
+        </div>
+        <div class="mode-card" data-mode="arcade">
+          <h3>Arcade</h3>
+          <p>60 seconds. Bombs cost points, not lives. Chain combos for the high score.</p>
+          <div class="hs">Best: <span data-hs="arcade">0</span></div>
+        </div>
+      </div>
+
+      <div class="input-row">
+        <div class="input-opt selected" data-input="hand">✋ Webcam Hand Tracking</div>
+        <div class="input-opt" data-input="mouse">🖱️ Mouse / Touch</div>
+      </div>
+
+      <button class="btn" id="btn-start">Start Game</button>
+      <div id="status-line">Choose a mode and input, then start.</div>
+    </div>
+  </div>
+
+  <!-- Calibrating / Webcam init screen -->
+  <div id="screen-loading" class="screen hidden">
+    <div class="panel">
+      <div class="spinner"></div>
+      <h1 class="title" style="font-size:40px;">Warming Up</h1>
+      <div class="subtitle" id="loading-text">Requesting camera access…</div>
+      <button class="btn secondary" id="btn-cancel-loading">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Game Over Screen -->
+  <div id="screen-gameover" class="screen hidden">
+    <div class="panel">
+      <div class="subtitle">Run complete</div>
+      <div id="final-score">0</div>
+      <div id="new-record">New Record!</div>
+      <div style="display:flex; gap:12px; justify-content:center; margin-top:10px;">
+        <button class="btn" id="btn-retry">Play Again</button>
+        <button class="btn secondary" id="btn-menu">Change Mode</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pause Screen -->
+  <div id="screen-pause" class="screen hidden">
+    <div class="panel">
+      <h1 class="title" style="font-size:44px;">Paused</h1>
+      <div style="display:flex; gap:12px; justify-content:center; margin-top:6px;">
+        <button class="btn" id="btn-resume">Resume</button>
+        <button class="btn secondary" id="btn-quit">Quit to Menu</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer class="credits">MediaPipe Hands · Canvas 2D · Web Audio API</footer>
+
+<!-- MediaPipe Hands (CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+<script>
+/* =========================================================================
+   BLADE DOJO — Hand-tracking fruit slicing game
+   Sections: CONFIG · AUDIO · HAND TRACKING · INPUT · ENTITIES · COLLISION
+             GAME ENGINE · RENDERER · UI MANAGER · BOOTSTRAP
+   ========================================================================= */
+
+/* ------------------------------- CONFIG --------------------------------- */
+const CONFIG = {
+  GRAVITY: 1400,                 // px/s^2
+  BLADE_TRAIL_LENGTH: 14,        // trail points kept
+  BLADE_HIT_PADDING: 14,         // extra px added to fruit radius for slicing
+  MIN_SWIPE_SPEED: 60,           // px/s, below this no slicing occurs
+  COMBO_WINDOW_MS: 850,          // time allowed between slices to keep combo
+  FRUIT_TYPES: [
+    { name:'watermelon', r:44, color:'#3ddc6b', core:'#ff5f7e', points:10 },
+    { name:'orange',     r:34, color:'#ff9f3d', core:'#ffcf8a', points:10 },
+    { name:'apple',      r:32, color:'#ff4d5e', core:'#ffe1cf', points:10 },
+    { name:'plum',       r:28, color:'#a86bff', core:'#e8d4ff', points:15 },
+    { name:'kiwi',       r:26, color:'#b6e33d', core:'#e9ffb0', points:15 },
+    { name:'lemon',      r:27, color:'#f5e642', core:'#fff9c9', points:10 },
+  ],
+  BOMB: { r:34, color:'#1a1d24', points:0 },
+  MODES: {
+    classic: { lives:3, bombs:true,  timed:false, duration:0,  bombFail:'end' },
+    zen:     { lives:0, bombs:false, timed:true,  duration:90, bombFail:'none' },
+    arcade:  { lives:0, bombs:true,  timed:true,  duration:60, bombFail:'penalty' },
+  }
+};
+
+/* -------------------------------- AUDIO ---------------------------------- */
+const AudioEngine = (() => {
+  let ctx = null, noiseBuffer = null, muted = false;
+
+  function ensureCtx(){
+    if (!ctx){
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      noiseBuffer = buildNoiseBuffer(1.0);
+    }
+    if (ctx.state === 'suspended') ctx.resume();
+  }
+
+  function buildNoiseBuffer(seconds){
+    const c = new (window.AudioContext || window.webkitAudioContext)();
+    const len = Math.floor(c.sampleRate * seconds);
+    const buf = c.createBuffer(1, len, c.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i=0;i<len;i++) data[i] = Math.random()*2-1;
+    return buf;
+  }
+
+  function noiseSource(){
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuffer;
+    return src;
+  }
+
+  function playSlice(pitchVar=0){
+    if (muted || !ctx) return;
+    const src = noiseSource();
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 2200 + pitchVar*400;
+    bp.Q.value = 0.8;
+    const gain = ctx.createGain();
+    const t0 = ctx.currentTime;
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(0.5, t0+0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0+0.16);
+    src.connect(bp).connect(gain).connect(ctx.destination);
+    src.start(t0); src.stop(t0+0.18);
+  }
+
+  function playBomb(){
+    if (muted || !ctx) return;
+    const t0 = ctx.currentTime;
+    const src = noiseSource();
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.setValueAtTime(1800,t0);
+    lp.frequency.exponentialRampToValueAtTime(80, t0+0.5);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.9, t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0+0.6);
+    src.connect(lp).connect(gain).connect(ctx.destination);
+    src.start(t0); src.stop(t0+0.6);
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine'; osc.frequency.setValueAtTime(120,t0);
+    osc.frequency.exponentialRampToValueAtTime(30, t0+0.4);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.7,t0);
+    og.gain.exponentialRampToValueAtTime(0.0001, t0+0.45);
+    osc.connect(og).connect(ctx.destination);
+    osc.start(t0); osc.stop(t0+0.45);
+  }
+
+  function playCombo(tier){
+    if (muted || !ctx) return;
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    const base = 520 + tier*90;
+    osc.frequency.setValueAtTime(base, t0);
+    osc.frequency.exponentialRampToValueAtTime(base*1.5, t0+0.12);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.25, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0+0.18);
+    osc.connect(g).connect(ctx.destination);
+    osc.start(t0); osc.stop(t0+0.2);
+  }
+
+  function playMiss(){
+    if (muted || !ctx) return;
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'sine'; osc.frequency.setValueAtTime(180,t0);
+    osc.frequency.exponentialRampToValueAtTime(60, t0+0.2);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.3,t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0+0.22);
+    osc.connect(g).connect(ctx.destination);
+    osc.start(t0); osc.stop(t0+0.25);
+  }
+
+  function playGameOver(){
+    if (muted || !ctx) return;
+    const notes = [420,340,260,180];
+    notes.forEach((f,i)=>{
+      const t0 = ctx.currentTime + i*0.14;
+      const osc = ctx.createOscillator();
+      osc.type='sawtooth'; osc.frequency.setValueAtTime(f,t0);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.18,t0);
+      g.gain.exponentialRampToValueAtTime(0.0001,t0+0.22);
+      osc.connect(g).connect(ctx.destination);
+      osc.start(t0); osc.stop(t0+0.24);
+    });
+  }
+
+  function toggleMute(){ muted = !muted; return muted; }
+
+  return { ensureCtx, playSlice, playBomb, playCombo, playMiss, playGameOver, toggleMute, get muted(){return muted;} };
+})();
+
+/* ---------------------------- HAND TRACKING ------------------------------ */
+const HandTracker = (() => {
+  let videoEl, hands, camera;
+  let smoothX = null, smoothY = null;
+  let rawX = 0, rawY = 0, tracking = false, lastSeen = 0;
+  const SMOOTH_ALPHA = 0.45;
+  let targetW = window.innerWidth, targetH = window.innerHeight;
+  let onUpdateCb = null;
+
+  function init(videoElement, onFirstFrame){
+    videoEl = videoElement;
+    hands = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.5,
+      selfieMode: true
+    });
+    hands.onResults(onResults);
+
+    camera = new Camera(videoEl, {
+      onFrame: async () => { await hands.send({ image: videoEl }); },
+      width: 640, height: 480
+    });
+    return camera.start().then(() => { if (onFirstFrame) onFirstFrame(); });
+  }
+
+  function onResults(results){
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
+      const tip = results.multiHandLandmarks[0][8]; // index fingertip
+      rawX = tip.x * targetW;
+      rawY = tip.y * targetH;
+      tracking = true;
+      lastSeen = performance.now();
+      if (smoothX === null){ smoothX = rawX; smoothY = rawY; }
+      smoothX += (rawX - smoothX) * SMOOTH_ALPHA;
+      smoothY += (rawY - smoothY) * SMOOTH_ALPHA;
+    } else {
+      // lose tracking after short grace period
+      if (performance.now() - lastSeen > 400) tracking = false;
+    }
+    if (onUpdateCb) onUpdateCb({ x: smoothX, y: smoothY, tracking, previewTip: results.multiHandLandmarks?.[0]?.[8] });
+  }
+
+  function setCanvasSize(w,h){ targetW = w; targetH = h; }
+  function onUpdate(cb){ onUpdateCb = cb; }
+  function getPosition(){ return { x: smoothX ?? targetW/2, y: smoothY ?? targetH/2, tracking }; }
+  function stop(){ if (camera) camera.stop(); }
+
+  return { init, setCanvasSize, onUpdate, getPosition, stop };
+})();
+
+/* -------------------------------- INPUT ----------------------------------- */
+const InputManager = (() => {
+  let mode = 'hand'; // 'hand' | 'mouse'
+  let x = window.innerWidth/2, y = window.innerHeight/2;
+  let active = false;
+  let canvasEl;
+
+  function init(canvas){
+    canvasEl = canvas;
+    canvas.addEventListener('mousemove', e => { x = e.clientX; y = e.clientY; active = true; });
+    canvas.addEventListener('touchmove', e => {
+      if (e.touches.length){ x = e.touches[0].clientX; y = e.touches[0].clientY; active = true; }
+      e.preventDefault();
+    }, { passive:false });
+    canvas.addEventListener('touchstart', e => { e.preventDefault(); }, { passive:false });
+  }
+
+  function setMode(m){ mode = m; }
+  function getMode(){ return mode; }
+
+  function getPosition(){
+    if (mode === 'hand'){
+      const p = HandTracker.getPosition();
+      return { x: p.x, y: p.y, active: p.tracking };
+    }
+    return { x, y, active };
+  }
+
+  return { init, setMode, getMode, getPosition };
+})();
+
+/* ------------------------------- ENTITIES --------------------------------- */
+let ENTITY_ID = 0;
+
+function makeFruit(type, x, y, vx, vy){
+  return {
+    id: ENTITY_ID++, kind:'fruit', type, x, y, vx, vy,
+    rotation: Math.random()*Math.PI*2,
+    rotSpeed: (Math.random()*2-1) * 3.2,
+    radius: type.r, sliced:false, dead:false, age:0
+  };
+}
+function makeBomb(x,y,vx,vy){
+  return {
+    id: ENTITY_ID++, kind:'bomb', x, y, vx, vy,
+    rotation:0, rotSpeed: (Math.random()*2-1)*1.5,
+    radius: CONFIG.BOMB.r, sliced:false, dead:false, age:0, sparkT:0
+  };
+}
+function makeHalf(parent, sign, sliceAngle){
+  // sign = -1 / +1 for the two halves
+  const speed = 220 + Math.random()*80;
+  const angle = sliceAngle + Math.PI/2 * sign + (Math.random()*0.3-0.15);
+  return {
+    kind:'half', type:parent.type, x:parent.x, y:parent.y,
+    vx: Math.cos(angle)*speed*0.5 + parent.vx*0.4,
+    vy: Math.sin(angle)*speed*0.5 + parent.vy*0.4 - 80,
+    radius: parent.radius, rotation:parent.rotation,
+    rotSpeed: sign*4 + parent.rotSpeed,
+    sign, age:0, maxAge:1.4, dead:false
+  };
+}
+function makeParticle(x,y,color){
+  const ang = Math.random()*Math.PI*2;
+  const speed = 60 + Math.random()*260;
+  return {
+    x,y, vx:Math.cos(ang)*speed, vy:Math.sin(ang)*speed - 60,
+    size: 2+Math.random()*4, color, age:0, maxAge:0.5+Math.random()*0.4, dead:false
+  };
+}
+function makePopup(x,y,text,color){
+  return { x,y, text, color, age:0, maxAge:0.8, dead:false };
+}
+
+/* ------------------------------ COLLISION ---------------------------------- */
+function pointSegmentDistance(px,py,x1,y1,x2,y2){
+  const dx = x2-x1, dy = y2-y1;
+  const lenSq = dx*dx + dy*dy;
+  let t = lenSq === 0 ? 0 : ((px-x1)*dx + (py-y1)*dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const cx = x1 + t*dx, cy = y1 + t*dy;
+  return Math.hypot(px-cx, py-cy);
+}
+
+/* ------------------------------ GAME ENGINE --------------------------------- */
+const Game = (() => {
+  let canvas, ctx, W, H;
+  let fruits = [], bombs = [], halves = [], particles = [], popups = [];
+  let trail = []; // {x,y,t}
+  let prevBlade = null;
+  let running = false, paused = false;
+  let mode = 'classic', modeCfg = null;
+  let score = 0, lives = 0, combo = 0, comboTimer = 0, timeLeft = 0, elapsed = 0;
+  let spawnTimer = 0, difficultyT = 0;
+  let highScores = { classic:0, zen:0, arcade:0 };
+  let lastFrameTime = 0;
+  let rafId = null;
+  let onStateChange = null, onGameOver = null;
+
+  function loadHighScores(){
+    try {
+      const raw = localStorage.getItem('bladeDojoHighScores');
+      if (raw) highScores = Object.assign(highScores, JSON.parse(raw));
+    } catch(e){ /* ignore corrupted storage */ }
+  }
+  function saveHighScore(){
+    highScores[mode] = Math.max(highScores[mode]||0, score);
+    try { localStorage.setItem('bladeDojoHighScores', JSON.stringify(highScores)); } catch(e){}
+  }
+
+  function init(canvasEl){
+    canvas = canvasEl; ctx = canvas.getContext('2d');
+    resize();
+    window.addEventListener('resize', resize);
+    loadHighScores();
+  }
+
+  function resize(){
+    W = canvas.width = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+    HandTracker.setCanvasSize(W,H);
+  }
+
+  function start(selectedMode){
+    mode = selectedMode;
+    modeCfg = CONFIG.MODES[mode];
+    fruits = []; bombs = []; halves = []; particles = []; popups = []; trail = []; prevBlade = null;
+    score = 0; lives = modeCfg.lives; combo = 0; comboTimer = 0;
+    timeLeft = modeCfg.duration; elapsed = 0; spawnTimer = 0.4; difficultyT = 0;
+    running = true; paused = false;
+    lastFrameTime = performance.now();
+    if (onStateChange) onStateChange(snapshot());
+    loop(lastFrameTime);
+  }
+
+  function stop(){ running = false; if (rafId) cancelAnimationFrame(rafId); }
+  function setPaused(p){ paused = p; if (!p){ lastFrameTime = performance.now(); } }
+  function isPaused(){ return paused; }
+
+  function snapshot(){
+    return { score, lives, maxLives: modeCfg?.lives||0, combo, timeLeft, mode,
+             highScore: highScores[mode]||0, timed: modeCfg?.timed, hasLives: modeCfg?.lives>0 };
+  }
+
+  /* ---- spawning ---- */
+  function spawnWave(){
+    const count = 1 + Math.floor(Math.random()*Math.min(3, 1+Math.floor(difficultyT/18)));
+    for (let i=0;i<count;i++){
+      const spawnBomb = modeCfg.bombs && Math.random() < Math.min(0.22, 0.05 + difficultyT*0.004);
+      const x = W*0.15 + Math.random()*W*0.7;
+      const apex = H*0.22 + Math.random()*H*0.18;
+      const vy = -Math.sqrt(2*CONFIG.GRAVITY*(H - apex)) * (0.9+Math.random()*0.15);
+      const vx = (Math.random()*2-1) * 120;
+      if (spawnBomb){
+        bombs.push(makeBomb(x, H+40, vx, vy));
+      } else {
+        const type = CONFIG.FRUIT_TYPES[Math.floor(Math.random()*CONFIG.FRUIT_TYPES.length)];
+        fruits.push(makeFruit(type, x, H+40, vx, vy));
+      }
+    }
+  }
+
+  /* ---- combo handling ---- */
+  function registerSlice(points, x, y){
+    combo += 1;
+    comboTimer = CONFIG.COMBO_WINDOW_MS;
+    const multiplier = 1 + Math.min(4, Math.floor(combo/3));
+    const gained = points * multiplier;
+    score += gained;
+    popups.push(makePopup(x, y, '+'+gained, multiplier>1 ? '#ffcf4d' : '#eaf6ff'));
+    if (multiplier>1 && combo%3===0){
+      popups.push(makePopup(x, y-34, 'COMBO x'+multiplier, '#ffcf4d'));
+      AudioEngine.playCombo(multiplier);
+    }
+  }
+  function breakCombo(){ combo = 0; comboTimer = 0; }
+
+  function onBombHit(bomb){
+    // explosion visuals
+    for (let i=0;i<28;i++) particles.push(makeParticle(bomb.x, bomb.y, i%2? '#ff6b3b':'#ffdf5e'));
+    AudioEngine.playBomb();
+    breakCombo();
+    if (modeCfg.bombFail === 'end'){
+      bomb.dead = true;
+      endGame();
+    } else if (modeCfg.bombFail === 'penalty'){
+      score = Math.max(0, score - 50);
+      popups.push(makePopup(bomb.x, bomb.y, '-50', '#ff5f5f'));
+      bomb.dead = true;
+    } else {
+      bomb.dead = true;
+    }
+  }
+
+  function onFruitSliced(f, sliceAngle){
+    f.sliced = true; f.dead = true;
+    registerSlice(f.type.points, f.x, f.y);
+    halves.push(makeHalf(f, -1, sliceAngle));
+    halves.push(makeHalf(f, 1, sliceAngle));
+    for (let i=0;i<14;i++) particles.push(makeParticle(f.x, f.y, f.type.core));
+    AudioEngine.playSlice((Math.random()*2-1));
+  }
+
+  function onFruitMissed(){
+    if (modeCfg.lives > 0){
+      lives -= 1;
+      breakCombo();
+      AudioEngine.playMiss();
+      if (lives <= 0) endGame();
+    }
+  }
+
+  /* ---- collision pass against current swipe segment ---- */
+  function checkCollisions(x1,y1,x2,y2,speed){
+    if (speed < CONFIG.MIN_SWIPE_SPEED) return;
+    const angle = Math.atan2(y2-y1, x2-x1);
+    for (const f of fruits){
+      if (f.dead) continue;
+      const d = pointSegmentDistance(f.x, f.y, x1,y1,x2,y2);
+      if (d <= f.radius + CONFIG.BLADE_HIT_PADDING) onFruitSliced(f, angle);
+    }
+    for (const b of bombs){
+      if (b.dead) continue;
+      const d = pointSegmentDistance(b.x, b.y, x1,y1,x2,y2);
+      if (d <= b.radius + CONFIG.BLADE_HIT_PADDING) onBombHit(b);
+    }
+  }
+
+  /* ---- update ---- */
+  function update(dt){
+    elapsed += dt; difficultyT += dt;
+
+    // blade / trail
+    const pos = InputManager.getPosition();
+    const now = performance.now();
+    if (pos.active){
+      trail.push({ x:pos.x, y:pos.y, t:now });
+      while (trail.length > CONFIG.BLADE_TRAIL_LENGTH) trail.shift();
+      if (prevBlade){
+        const dx = pos.x - prevBlade.x, dy = pos.y - prevBlade.y;
+        const dtms = Math.max(1, now - prevBlade.t);
+        const speed = Math.hypot(dx,dy) / (dtms/1000);
+        checkCollisions(prevBlade.x, prevBlade.y, pos.x, pos.y, speed);
+        // trail particles while moving fast
+        if (speed > 300){
+          particles.push(Object.assign(makeParticle(pos.x,pos.y,'#bffff5'), { vx:0, vy:0, size:3, maxAge:0.25 }));
+        }
+      }
+      prevBlade = { x:pos.x, y:pos.y, t:now };
+    } else {
+      trail = [];
+      prevBlade = null;
+    }
+    // trail decay
+    while (trail.length && now - trail[0].t > 220) trail.shift();
+
+    // combo decay
+    if (comboTimer > 0){ comboTimer -= dt*1000; if (comboTimer<=0) breakCombo(); }
+
+    // spawner
+    const spawnInterval = Math.max(0.45, 1.3 - difficultyT*0.012);
+    spawnTimer -= dt;
+    if (spawnTimer <= 0){ spawnWave(); spawnTimer = spawnInterval; }
+
+    // physics: fruits
+    for (const f of fruits){
+      if (f.dead) continue;
+      f.vy += CONFIG.GRAVITY*dt; f.x += f.vx*dt; f.y += f.vy*dt; f.rotation += f.rotSpeed*dt; f.age += dt;
+      if (f.y - f.radius > H + 60){ f.dead = true; onFruitMissed(); }
+    }
+    for (const b of bombs){
+      if (b.dead) continue;
+      b.vy += CONFIG.GRAVITY*dt; b.x += b.vx*dt; b.y += b.vy*dt; b.rotation += b.rotSpeed*dt; b.age += dt; b.sparkT += dt;
+      if (b.y - b.radius > H + 60) b.dead = true;
+    }
+    for (const h of halves){
+      h.vy += CONFIG.GRAVITY*dt; h.x += h.vx*dt; h.y += h.vy*dt; h.rotation += h.rotSpeed*dt; h.age += dt;
+      if (h.age > h.maxAge || h.y - h.radius > H+80) h.dead = true;
+    }
+    for (const p of particles){
+      p.vy += CONFIG.GRAVITY*0.4*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.age += dt;
+      if (p.age > p.maxAge) p.dead = true;
+    }
+    for (const pu of popups){ pu.age += dt; pu.y -= 26*dt; if (pu.age > pu.maxAge) pu.dead = true; }
+
+    fruits = fruits.filter(f=>!f.dead);
+    bombs = bombs.filter(b=>!b.dead);
+    halves = halves.filter(h=>!h.dead);
+    particles = particles.filter(p=>!p.dead);
+    popups = popups.filter(p=>!p.dead);
+
+    // timer
+    if (modeCfg.timed){
+      timeLeft -= dt;
+      if (timeLeft <= 0){ timeLeft = 0; endGame(); }
+    }
+
+    if (onStateChange) onStateChange(snapshot());
+  }
+
+  function endGame(){
+    if (!running) return;
+    running = false;
+    saveHighScore();
+    AudioEngine.playGameOver();
+    if (onGameOver) onGameOver({ score, highScore: highScores[mode], isRecord: score>=highScores[mode] && score>0 });
+  }
+
+  /* ---- render ---- */
+  function render(){
+    ctx.clearRect(0,0,W,H);
+    // subtle vignette backdrop handled by CSS; draw faint grid dojo floor glow
+    const grad = ctx.createRadialGradient(W/2, H*0.15, 50, W/2, H*0.6, H*0.9);
+    grad.addColorStop(0, 'rgba(77,255,240,0.05)');
+    grad.addColorStop(1, 'rgba(6,9,17,0)');
+    ctx.fillStyle = grad; ctx.fillRect(0,0,W,H);
+
+    for (const p of particles) drawParticle(p);
+    for (const b of bombs) drawBomb(b);
+    for (const f of fruits) drawFruit(f);
+    for (const h of halves) drawHalf(h);
+    for (const pu of popups) drawPopup(pu);
+    drawTrail();
+  }
+
+  function drawFruit(f){
+    ctx.save();
+    ctx.translate(f.x, f.y); ctx.rotate(f.rotation);
+    const g = ctx.createRadialGradient(-f.radius*0.3,-f.radius*0.3, f.radius*0.1, 0,0, f.radius);
+    g.addColorStop(0, lighten(f.type.color, 40));
+    g.addColorStop(1, f.type.color);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0,0,f.radius,0,Math.PI*2); ctx.fill();
+    // highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath(); ctx.ellipse(-f.radius*0.35,-f.radius*0.35, f.radius*0.28, f.radius*0.16, -0.6, 0, Math.PI*2); ctx.fill();
+    // stem
+    ctx.strokeStyle = '#5b3a22'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0,-f.radius); ctx.lineTo(f.radius*0.15,-f.radius-8); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawHalf(h){
+    ctx.save();
+    ctx.translate(h.x, h.y); ctx.rotate(h.rotation);
+    const alpha = Math.max(0, 1 - h.age/h.maxAge);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = h.type.color;
+    ctx.beginPath();
+    ctx.arc(0,0,h.radius, h.sign>0 ? -Math.PI/2 : Math.PI/2, h.sign>0 ? Math.PI/2 : Math.PI*1.5);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = h.type.core;
+    ctx.beginPath();
+    ctx.arc(0,0,h.radius*0.7, h.sign>0 ? -Math.PI/2 : Math.PI/2, h.sign>0 ? Math.PI/2 : Math.PI*1.5);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawBomb(b){
+    ctx.save();
+    ctx.translate(b.x,b.y); ctx.rotate(b.rotation);
+    const pulse = 0.5 + Math.sin(b.age*8)*0.5;
+    ctx.shadowColor = `rgba(255,60,40,${0.4+pulse*0.4})`;
+    ctx.shadowBlur = 24;
+    const g = ctx.createRadialGradient(-10,-10,4,0,0,b.radius);
+    g.addColorStop(0, '#3a3f4a'); g.addColorStop(1, '#0c0e13');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0,0,b.radius,0,Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    // fuse
+    ctx.strokeStyle = '#c9a227'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0,-b.radius); ctx.quadraticCurveTo(10,-b.radius-14,4,-b.radius-22); ctx.stroke();
+    // spark
+    if (Math.sin(b.sparkT*20) > 0){
+      ctx.fillStyle = '#ffdf5e';
+      ctx.beginPath(); ctx.arc(4,-b.radius-22,3,0,Math.PI*2); ctx.fill();
+    }
+    // skull-ish glyph
+    ctx.fillStyle = 'rgba(255,90,60,0.9)';
+    ctx.font = `${b.radius}px sans-serif`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('!', 0, 2);
+    ctx.restore();
+  }
+
+  function drawParticle(p){
+    const alpha = Math.max(0, 1-p.age/p.maxAge);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  function drawPopup(pu){
+    const alpha = Math.max(0, 1-pu.age/pu.maxAge);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = pu.color;
+    ctx.font = '700 22px Rubik, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(pu.text, pu.x, pu.y);
+    ctx.globalAlpha = 1;
+  }
+
+  function drawTrail(){
+    if (trail.length < 2) return;
+    ctx.save();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (let i=1;i<trail.length;i++){
+      const a = i/trail.length;
+      ctx.strokeStyle = `rgba(77,255,240,${a*0.9})`;
+      ctx.lineWidth = 3 + a*9;
+      ctx.shadowColor = 'rgba(77,255,240,0.8)';
+      ctx.shadowBlur = 18*a;
+      ctx.beginPath();
+      ctx.moveTo(trail[i-1].x, trail[i-1].y);
+      ctx.lineTo(trail[i].x, trail[i].y);
+      ctx.stroke();
+    }
+    ctx.restore();
+    // tip glow
+    const tip = trail[trail.length-1];
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.shadowColor = '#4dfff0'; ctx.shadowBlur = 24;
+    ctx.beginPath(); ctx.arc(tip.x, tip.y, 5, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  function lighten(hex, amt){
+    const c = hex.replace('#','');
+    const num = parseInt(c,16);
+    let r = (num>>16) + amt, g = ((num>>8)&0xff) + amt, b = (num&0xff) + amt;
+    r = Math.min(255,r); g = Math.min(255,g); b = Math.min(255,b);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function loop(t){
+    if (!running){ return; }
+    rafId = requestAnimationFrame(loop);
+    if (paused){ lastFrameTime = t; return; }
+    const dt = Math.min(0.033, (t - lastFrameTime)/1000);
+    lastFrameTime = t;
+    update(dt);
+    render();
+  }
+
+  function setCallbacks({ stateChange, gameOver }){ onStateChange = stateChange; onGameOver = gameOver; }
+  function getHighScores(){ return highScores; }
+
+  return { init, start, stop, setPaused, isPaused, setCallbacks, getHighScores };
+})();
+
+/* ------------------------------- UI MANAGER --------------------------------- */
+const UI = (() => {
+  const el = id => document.getElementById(id);
+  let selectedMode = 'classic', selectedInput = 'hand';
+  let previewCtx;
+
+  function init(){
+    // mode selection
+    document.querySelectorAll('.mode-card').forEach(card=>{
+      card.addEventListener('click', ()=>{
+        document.querySelectorAll('.mode-card').forEach(c=>c.classList.remove('selected'));
+        card.classList.add('selected');
+        selectedMode = card.dataset.mode;
+      });
+    });
+    document.querySelectorAll('.input-opt').forEach(opt=>{
+      opt.addEventListener('click', ()=>{
+        document.querySelectorAll('.input-opt').forEach(o=>o.classList.remove('selected'));
+        opt.classList.add('selected');
+        selectedInput = opt.dataset.input;
+      });
+    });
+
+    el('btn-start').addEventListener('click', onStartClicked);
+    el('btn-cancel-loading').addEventListener('click', ()=>{
+      showScreen('start');
+    });
+    el('btn-retry').addEventListener('click', ()=>{ launchGame(selectedMode); });
+    el('btn-menu').addEventListener('click', ()=>{ showScreen('start'); refreshHighScores(); });
+    el('btn-resume').addEventListener('click', ()=>{ Game.setPaused(false); showScreen(null); });
+    el('btn-quit').addEventListener('click', ()=>{ Game.stop(); showScreen('start'); refreshHighScores(); });
+
+    document.addEventListener('keydown', e=>{
+      if (e.key === 'p' || e.key === 'P'){ togglePause(); }
+      if (e.key === 'Escape'){ Game.stop(); showScreen('start'); refreshHighScores(); }
+      if (e.key === 'm' || e.key === 'M'){ AudioEngine.toggleMute(); }
+    });
+
+    refreshHighScores();
+  }
+
+  function refreshHighScores(){
+    const hs = Game.getHighScores();
+    document.querySelectorAll('[data-hs]').forEach(s=>{
+      s.textContent = hs[s.dataset.hs] || 0;
+    });
+  }
+
+  function togglePause(){
+    if (el('screen-gameover').classList.contains('hidden') === false) return;
+    if (el('screen-start').classList.contains('hidden') === false) return;
+    const willPause = !Game.isPaused();
+    Game.setPaused(willPause);
+    showScreen(willPause ? 'pause' : null);
+  }
+
+  function showScreen(name){
+    ['start','loading','gameover','pause'].forEach(s=>{
+      el('screen-'+s).classList.toggle('hidden', s!==name);
+    });
+    el('hud').classList.toggle('hidden', name!==null);
+    el('pause-hint').classList.toggle('hidden', name!==null);
+    el('hand-preview-wrap').classList.toggle('hidden', selectedInput!=='hand' || name==='start' || name==='gameover');
+  }
+
+  async function onStartClicked(){
+    AudioEngine.ensureCtx();
+    InputManager.setMode(selectedInput);
+    if (selectedInput === 'hand'){
+      showScreen('loading');
+      el('loading-text').textContent = 'Requesting camera access…';
+      try {
+        await new Promise((resolve, reject)=>{
+          navigator.mediaDevices.getUserMedia({ video:{ width:640, height:480 }, audio:false })
+            .then(stream=>{
+              const videoEl = el('preview-video');
+              videoEl.srcObject = stream;
+              el('loading-text').textContent = 'Loading hand tracking model…';
+              HandTracker.init(videoEl, ()=>{ resolve(); });
+              HandTracker.onUpdate(updatePreviewDot);
+            })
+            .catch(reject);
+        });
+        el('loading-text').textContent = 'Show your hand to the camera…';
+        await waitForFirstTracking(4000);
+      } catch (err){
+        console.warn('Webcam/hand tracking unavailable, falling back to mouse.', err);
+        el('status-line').textContent = 'Webcam unavailable — switched to mouse/touch input.';
+        InputManager.setMode('mouse');
+        selectedInput = 'mouse';
+      }
+    }
+    launchGame(selectedMode);
+  }
+
+  function waitForFirstTracking(timeoutMs){
+    return new Promise(resolve=>{
+      const start = performance.now();
+      const check = ()=>{
+        const p = HandTracker.getPosition();
+        if (p.tracking || performance.now()-start > timeoutMs) resolve();
+        else requestAnimationFrame(check);
+      };
+      check();
+    });
+  }
+
+  function updatePreviewDot(data){
+    const canvas = el('preview-overlay');
+    if (!previewCtx){
+      canvas.width = canvas.clientWidth * (window.devicePixelRatio||1);
+      canvas.height = canvas.clientHeight * (window.devicePixelRatio||1);
+      previewCtx = canvas.getContext('2d');
+    }
+    const w = canvas.width, h = canvas.height;
+    previewCtx.clearRect(0,0,w,h);
+    const status = el('tracking-status');
+    if (data.tracking && data.previewTip){
+      status.textContent = 'Tracking'; status.classList.add('live');
+      previewCtx.fillStyle = '#4dfff0';
+      previewCtx.shadowColor = '#4dfff0'; previewCtx.shadowBlur = 12;
+      previewCtx.beginPath();
+      previewCtx.arc(data.previewTip.x*w, data.previewTip.y*h, 6, 0, Math.PI*2);
+      previewCtx.fill();
+    } else {
+      status.textContent = 'Searching…'; status.classList.remove('live');
+    }
+  }
+
+  function launchGame(mode){
+    showScreen(null);
+    el('mode-pill').textContent = mode.charAt(0).toUpperCase()+mode.slice(1);
+    Game.start(mode);
+  }
+
+  function renderState(state){
+    el('score-value').textContent = state.score;
+    el('hs-value').textContent = state.highScore;
+    const comboEl = el('combo-display');
+    if (state.combo >= 3){
+      const mult = 1 + Math.min(4, Math.floor(state.combo/3));
+      comboEl.textContent = 'COMBO x'+mult;
+      comboEl.classList.add('show');
+    } else comboEl.classList.remove('show');
+
+    const livesRow = el('lives-row');
+    if (state.hasLives){
+      livesRow.style.display = 'flex';
+      if (livesRow.children.length !== state.maxLives){
+        livesRow.innerHTML = '';
+        for (let i=0;i<state.maxLives;i++){ const d=document.createElement('div'); d.className='life-dot'; livesRow.appendChild(d); }
+      }
+      [...livesRow.children].forEach((d,i)=>{ d.classList.toggle('lost', i>=state.lives); });
+    } else {
+      livesRow.style.display = 'none';
+    }
+
+    const timerLabel = el('timer-label'), timerValue = el('timer-value');
+    if (state.timed){
+      timerLabel.style.display='block'; timerValue.style.display='block';
+      timerValue.textContent = Math.ceil(state.timeLeft);
+    } else {
+      timerLabel.style.display='none'; timerValue.style.display='none';
+    }
+  }
+
+  function onGameOver(result){
+    el('final-score').textContent = result.score;
+    el('new-record').style.visibility = result.isRecord ? 'visible' : 'hidden';
+    showScreen('gameover');
+    refreshHighScores();
+  }
+
+  return { init, showScreen, renderState, onGameOver };
+})();
+
+/* ------------------------------- BOOTSTRAP ----------------------------------- */
+window.addEventListener('load', ()=>{
+  const canvas = document.getElementById('game-canvas');
+  InputManager.init(canvas);
+  Game.init(canvas);
+  Game.setCallbacks({
+    stateChange: UI.renderState,
+    gameOver: UI.onGameOver
+  });
+  UI.init();
+});
+</script>
+</body>
+</html>
